@@ -1,12 +1,19 @@
 import { workerConfig, maintenances } from '../../uptime.config'
-import { formatStatusChangeNotification, getWorkerLocation, notifyWithApprise } from './util'
+import {
+  formatStatusChangeNotification,
+  getWorkerLocation,
+  notifyWithApprise,
+  redactUrlForLog,
+} from './util'
 import { MonitorState, MonitorTarget } from '../../types/config'
 import { getStatus } from './monitor'
 import { DurableObject } from 'cloudflare:workers'
+import { sanitizePublicError } from '../../util/publicMonitor'
 
 export interface Env {
   UPTIMEFLARE_STATE: KVNamespace
   REMOTE_CHECKER_DO: DurableObjectNamespace<RemoteChecker>
+  UPTIMEFLARE_PROXY_TOKEN?: string
 }
 
 const Worker = {
@@ -99,7 +106,10 @@ const Worker = {
       if (monitor.checkProxy) {
         // Initiate a check using proxy (Geo-specific monitoring)
         try {
-          console.log('Calling check proxy: ' + monitor.checkProxy)
+          const proxyLabel = monitor.checkProxy.startsWith('worker://')
+            ? monitor.checkProxy
+            : redactUrlForLog(monitor.checkProxy)
+          console.log('Calling check proxy: ' + proxyLabel)
           let resp
           if (monitor.checkProxy.startsWith('worker://')) {
             const doLoc = monitor.checkProxy.replace('worker://', '')
@@ -115,18 +125,32 @@ const Worker = {
               // An error here is expected, ignore it
             }
           } else {
-            resp = await (
-              await fetch(monitor.checkProxy, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(monitor),
-              })
-            ).json<{ location: string; status: { ping: number; up: boolean; err: string } }>()
+            if (!env.UPTIMEFLARE_PROXY_TOKEN) {
+              throw new Error('UPTIMEFLARE_PROXY_TOKEN is required for HTTP(S) check proxies')
+            }
+
+            const proxyResponse = await fetch(monitor.checkProxy, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-uptimeflare-proxy-token': env.UPTIMEFLARE_PROXY_TOKEN,
+              },
+              body: JSON.stringify(monitor),
+            })
+
+            if (!proxyResponse.ok) {
+              throw new Error(`check proxy returned status ${proxyResponse.status}`)
+            }
+
+            resp = await proxyResponse.json<{
+              location: string
+              status: { ping: number; up: boolean; err: string }
+            }>()
           }
           checkLocation = resp.location
           status = resp.status
         } catch (err) {
-          console.log('Error calling proxy: ' + err)
+          console.log('Error calling proxy: ' + sanitizePublicError(String(err)))
           if (monitor.checkProxyFallback) {
             console.log('Falling back to local check...')
             status = await getStatus(monitor)

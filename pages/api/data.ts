@@ -1,5 +1,6 @@
 import { workerConfig } from '@/uptime.config'
 import { MonitorState } from '@/types/config'
+import { sanitizePublicError } from '@/util/publicMonitor'
 import { NextRequest } from 'next/server'
 
 export const runtime = 'edge'
@@ -20,23 +21,34 @@ export default async function handler(req: NextRequest): Promise<Response> {
   }
   const state = JSON.parse(stateStr) as unknown as MonitorState
 
-  let monitors: any = {}
+  const monitors: Record<
+    string,
+    { up: boolean; latency: number; location: string; message: string }
+  > = {}
 
-  for (let monitor of workerConfig.monitors) {
-    const isUp = state.incident[monitor.id].slice(-1)[0].end !== undefined
+  for (const monitor of workerConfig.monitors) {
+    const incidents = state.incident[monitor.id] ?? []
+    const lastIncident = incidents[incidents.length - 1]
+    const lastLatency = state.latency[monitor.id]?.recent?.slice(-1)[0]
+    const isUp = lastIncident?.end !== undefined
+    const lastError =
+      lastIncident && lastIncident.error.length > 0
+        ? lastIncident.error[lastIncident.error.length - 1]
+        : undefined
+
     monitors[monitor.id] = {
-      up: isUp,
-      latency: state.latency[monitor.id].recent.slice(-1)[0].ping,
-      location: state.latency[monitor.id].recent.slice(-1)[0].loc,
-      message: isUp ? 'OK' : state.incident[monitor.id].slice(-1)[0].error.slice(-1)[0],
+      up: Boolean(isUp),
+      latency: lastLatency?.ping ?? 0,
+      location: lastLatency?.loc ?? 'UNKNOWN',
+      message: isUp ? 'OK' : sanitizePublicError(lastError),
     }
   }
 
-  let ret = {
+  const ret = {
     up: state.overallUp,
     down: state.overallDown,
     updatedAt: state.lastUpdate,
-    monitors: monitors,
+    monitors,
   }
 
   return new Response(JSON.stringify(ret), {

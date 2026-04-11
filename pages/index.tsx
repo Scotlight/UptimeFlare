@@ -10,6 +10,7 @@ import MonitorList from '@/components/MonitorList'
 import { Center, Text } from '@mantine/core'
 import MonitorDetail from '@/components/MonitorDetail'
 import Footer from '@/components/Footer'
+import { sanitizePublicState } from '@/util/publicMonitor'
 
 export const runtime = 'experimental-edge'
 const inter = Inter({ subsets: ['latin'] })
@@ -18,13 +19,13 @@ export default function Home({
   state: stateStr,
   monitors,
 }: {
-  state: string
+  state?: string | null
   monitors: MonitorTarget[]
   tooltip?: string
   statusPageLink?: string
 }) {
   let state
-  if (stateStr !== undefined) {
+  if (stateStr !== undefined && stateStr !== null) {
     state = JSON.parse(stateStr) as MonitorState
   }
 
@@ -78,7 +79,15 @@ export async function getServerSideProps() {
   }
 
   // Read state as string from KV, to avoid hitting server-side cpu time limit
-  const state = (await UPTIMEFLARE_STATE?.get('state')) as unknown as MonitorState
+  let state: string | null = null
+  const stateStr = await UPTIMEFLARE_STATE?.get('state')
+  if (stateStr) {
+    try {
+      state = JSON.stringify(sanitizePublicState(JSON.parse(stateStr) as MonitorState))
+    } catch {
+      state = null
+    }
+  }
 
   // Only present these values to client
   const monitors = workerConfig.monitors.map((monitor) => {

@@ -1,4 +1,5 @@
 import { MonitorTarget } from '../../types/config'
+import { sanitizePublicError } from '../../util/publicMonitor'
 import { withTimeout, fetchTimeout } from './util'
 
 export async function getStatus(
@@ -26,13 +27,15 @@ export async function getStatus(
       await withTimeout(monitor.timeout || 10000, socket.opened)
       await socket.close()
 
-      console.log(`${monitor.name} connected to ${monitor.target}`)
+      console.log(`${monitor.name} TCP probe succeeded`)
 
       status.ping = Date.now() - startTime
       status.up = true
       status.err = ''
     } catch (e: Error | any) {
-      console.log(`${monitor.name} errored with ${e.name}: ${e.message}`)
+      console.log(
+        `${monitor.name} TCP probe failed: ${sanitizePublicError(`${e.name}: ${e.message}`)}`
+      )
       if (e.message.includes('timed out')) {
         status.ping = monitor.timeout || 10000
       }
@@ -80,11 +83,7 @@ export async function getStatus(
 
         // MUST contain responseKeyword
         if (monitor.responseKeyword && !responseBody.includes(monitor.responseKeyword)) {
-          console.log(
-            `${monitor.name} expected keyword ${
-              monitor.responseKeyword
-            }, not found in response (truncated to 100 chars): ${responseBody.slice(0, 100)}`
-          )
+          console.log(`${monitor.name} response keyword validation failed`)
           status.up = false
           status.err = "HTTP response doesn't contain the configured keyword"
           return status
@@ -95,11 +94,7 @@ export async function getStatus(
           monitor.responseForbiddenKeyword &&
           responseBody.includes(monitor.responseForbiddenKeyword)
         ) {
-          console.log(
-            `${monitor.name} forbidden keyword ${
-              monitor.responseForbiddenKeyword
-            }, found in response (truncated to 100 chars): ${responseBody.slice(0, 100)}`
-          )
+          console.log(`${monitor.name} response forbidden keyword validation failed`)
           status.up = false
           status.err = 'HTTP response contains the configured forbidden keyword'
           return status
@@ -109,7 +104,9 @@ export async function getStatus(
       status.up = true
       status.err = ''
     } catch (e: any) {
-      console.log(`${monitor.name} errored with ${e.name}: ${e.message}`)
+      console.log(
+        `${monitor.name} HTTP probe failed: ${sanitizePublicError(`${e.name}: ${e.message}`)}`
+      )
       if (e.name === 'AbortError') {
         status.ping = monitor.timeout || 10000
         status.up = false

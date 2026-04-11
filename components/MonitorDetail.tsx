@@ -69,6 +69,7 @@ export default function MonitorDetail({
         <a
           href={monitor.statusPageLink}
           target="_blank"
+          rel="noreferrer noopener"
           style={{ display: 'inline-flex', alignItems: 'center', color: 'inherit' }}
         >
           {statusIcon} {monitor.name}

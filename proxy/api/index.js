@@ -3,10 +3,88 @@
 const location = ''
 const defaultTimeout = 5000 // 5 seconds, a lower default for deployments on platforms like Vercel
 
+const crypto = require('crypto')
 const express = require('express')
 const net = require('net')
 const app = express()
 const port = 3000
+const proxyToken = process.env.UPTIMEFLARE_PROXY_TOKEN || ''
+
+function timingSafeEqual(a, b) {
+  const left = Buffer.from(a)
+  const right = Buffer.from(b)
+  if (left.length !== right.length) return false
+  return crypto.timingSafeEqual(left, right)
+}
+
+function isIpv4Address(hostname) {
+  const parts = hostname.split('.')
+  if (parts.length !== 4) return false
+
+  return parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) >= 0 && Number(part) <= 255)
+}
+
+function isPrivateTarget(hostname) {
+  const normalized = hostname.toLowerCase()
+  if (normalized === 'localhost' || normalized === '::1' || normalized === '::') return true
+  if (normalized.startsWith('fe80:') || normalized.startsWith('fc') || normalized.startsWith('fd')) {
+    return true
+  }
+  if (!isIpv4Address(normalized)) return false
+
+  const [a, b] = normalized.split('.').map(Number)
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 198 && (b === 18 || b === 19))
+  )
+}
+
+function getMonitorHostname(monitor) {
+  if (!monitor || typeof monitor !== 'object') {
+    throw new Error('Invalid monitor payload')
+  }
+
+  if (!monitor.method || !monitor.target) {
+    throw new Error('Monitor method and target are required')
+  }
+
+  if (monitor.method === 'TCP_PING') {
+    return new URL('https://' + monitor.target).hostname
+  }
+
+  const parsed = new URL(monitor.target)
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('Only HTTP and HTTPS targets are allowed')
+  }
+
+  return parsed.hostname
+}
+
+function assertSafeTarget(monitor) {
+  const hostname = getMonitorHostname(monitor)
+  if (isPrivateTarget(hostname)) {
+    throw new Error('Private and loopback targets are not allowed')
+  }
+}
+
+function requireProxyToken(req, res, next) {
+  if (!proxyToken) {
+    return res.status(503).json({ error: 'Proxy token not configured' })
+  }
+
+  const provided = req.get('x-uptimeflare-proxy-token') || ''
+  if (!timingSafeEqual(provided, proxyToken)) {
+    return res.status(401).json({ error: 'Not authenticated' })
+  }
+
+  next()
+}
 
 async function getWorkerLocation() {
   const res = await fetch('https://cloudflare.com/cdn-cgi/trace')
@@ -153,9 +231,16 @@ async function getStatus(monitor) {
   return status
 }
 
-app.use(express.json())
+app.disable('x-powered-by')
+app.use(express.json({ limit: '16kb' }))
 
-app.post('/', async (req, res) => {
+app.post('/', requireProxyToken, async (req, res) => {
+  try {
+    assertSafeTarget(req.body)
+  } catch (error) {
+    return res.status(400).json({ error: error.message })
+  }
+
   res.json({
     location: await getWorkerLocation(),
     status: await getStatus(req.body),

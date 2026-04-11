@@ -10,6 +10,7 @@ export default function Header({ style }: { style?: React.CSSProperties }) {
         key={i}
         href={link.link}
         target={link.link.startsWith('/') ? undefined : '_blank'}
+        rel={link.link.startsWith('/') ? undefined : 'noreferrer noopener'}
         className={classes.link}
         data-active={link.highlight}
       >
@@ -27,6 +28,7 @@ export default function Header({ style }: { style?: React.CSSProperties }) {
           <a
             href={location.pathname == '/' ? 'https://github.com/lyc8503/UptimeFlare' : '/'}
             target={location.pathname == '/' ? '_blank' : undefined}
+            rel={location.pathname == '/' ? 'noreferrer noopener' : undefined}
           >
             <Text size="xl" span>
               🕒

@@ -1,3 +1,5 @@
+import { sanitizePublicError } from '../../util/publicMonitor'
+
 async function getWorkerLocation() {
   const res = await fetch('https://cloudflare.com/cdn-cgi/trace')
   const text = await res.text()
@@ -24,6 +26,16 @@ function withTimeout<T>(millis: number, promise: Promise<T>): Promise<T> {
   )
 
   return Promise.race([promise, timeout])
+}
+
+function redactUrlForLog(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl)
+    const port = parsed.port ? `:${parsed.port}` : ''
+    return `${parsed.protocol}//${parsed.hostname}${port}`
+  } catch {
+    return '<redacted-url>'
+  }
 }
 
 function formatStatusChangeNotification(
@@ -74,14 +86,9 @@ async function notifyWithApprise(
   body: string
 ) {
   console.log(
-    'Sending Apprise notification: ' +
-      title +
-      '-' +
-      body +
-      ' to ' +
-      recipientUrl +
-      ' via ' +
-      appriseApiServer
+    `Sending Apprise notification via ${redactUrlForLog(appriseApiServer)} to ${redactUrlForLog(
+      recipientUrl
+    )}`
   )
   try {
     const resp = await fetchTimeout(appriseApiServer, 5000, {
@@ -99,14 +106,14 @@ async function notifyWithApprise(
     })
 
     if (!resp.ok) {
-      console.log(
-        'Error calling apprise server, code: ' + resp.status + ', response: ' + (await resp.text())
-      )
+      const responseText = await resp.text()
+      const details = responseText ? `, message: ${sanitizePublicError(responseText)}` : ''
+      console.log(`Error calling apprise server, code: ${resp.status}${details}`)
     } else {
       console.log('Apprise notification sent successfully, code: ' + resp.status)
     }
   } catch (e) {
-    console.log('Error calling apprise server: ' + e)
+    console.log('Error calling apprise server: ' + sanitizePublicError(String(e)))
   }
 }
 
@@ -116,4 +123,5 @@ export {
   withTimeout,
   notifyWithApprise,
   formatStatusChangeNotification,
+  redactUrlForLog,
 }
